@@ -71,8 +71,8 @@ static bool initES8311() {
     es8311WriteReg(0x1C, 0x6A);
     es8311WriteReg(0x37, 0x08);
 
-    // ボリューム（最大）
-    es8311WriteReg(0x32, 0xFF);
+    // ボリューム（ライブラリのOUTPUT_GAIN=6000に合わせて調整）
+    es8311WriteReg(0x32, 0xBF);
 
     delay(50);
     Serial.println("ES8311 DAC initialized (32kHz)");
