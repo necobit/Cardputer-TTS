@@ -139,3 +139,7 @@ bool writeI2S(const int16_t* buf, size_t frames) {
                                        &bytes_written, portMAX_DELAY);
     return err == ESP_OK;
 }
+
+void setES8311Volume(uint8_t vol) {
+    es8311WriteReg(0x32, vol);
+}

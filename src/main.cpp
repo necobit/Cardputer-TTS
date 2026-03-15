@@ -18,6 +18,14 @@ static M5Canvas* textCanvas = nullptr;
 static RomajiConverter converter;
 static bool ttsReady = false;
 
+// --- パラメータ制御 ---
+static uint8_t currentVolume = 0xBF;      // ES8311 DAC volume (0x00-0xFF)
+static float currentPitch = 130.0f;       // F0 (50-400Hz)
+static float currentFormant = 1.0f;       // Formant shift ratio (0.5-2.0)
+#define VOL_STEP     0x10
+#define PITCH_STEP   10.0f
+#define FORMANT_STEP 0.05f
+
 // ============================================================
 //  UI描画
 // ============================================================
@@ -58,6 +66,14 @@ void drawStatus(const char* msg) {
     M5Cardputer.Display.print(msg);
 }
 
+void drawParams() {
+    int volPct = (int)(currentVolume * 100 / 255);
+    int fmtPct = (int)(currentFormant * 100);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "V:%d%% P:%.0fHz F:%d%%", volPct, currentPitch, fmtPct);
+    drawStatus(buf);
+}
+
 void updateDisplay() {
     drawText();
     drawInput();
@@ -84,7 +100,7 @@ void speakText() {
         Serial.println("TTS: No valid hiragana");
     }
 
-    drawStatus("Ready [Enter:speak BS:del]");
+    drawParams();
 }
 
 // ============================================================
@@ -127,10 +143,11 @@ void setup() {
 
     // TTS初期化
     ttsInit(writeI2S);
+    ttsSetPitch(currentPitch);
     ttsReady = true;
     Serial.println("TTS ready");
 
-    drawStatus("Ready [Enter:speak BS:del]");
+    drawParams();
 
     // デモ発声
     delay(300);
@@ -151,7 +168,42 @@ void loop() {
     if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
         Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
 
-        if (status.del) {
+        if (status.fn) {
+            // FN + ;/./,// = 矢印キー操作 (Cardputer ADV)
+            for (auto c : status.word) {
+                switch (c) {
+                case ';': // Up: 音量上げ
+                    if (currentVolume <= 0xFF - VOL_STEP)
+                        currentVolume += VOL_STEP;
+                    else
+                        currentVolume = 0xFF;
+                    setES8311Volume(currentVolume);
+                    drawParams();
+                    break;
+                case '.': // Down(>): 音量下げ
+                    if (currentVolume >= VOL_STEP)
+                        currentVolume -= VOL_STEP;
+                    else
+                        currentVolume = 0x00;
+                    setES8311Volume(currentVolume);
+                    drawParams();
+                    break;
+                case '/': // Right: ピッチ上げ
+                    currentPitch += PITCH_STEP;
+                    if (currentPitch > 400.0f) currentPitch = 400.0f;
+                    ttsSetPitch(currentPitch);
+                    drawParams();
+                    break;
+                case ',': // Left: ピッチ下げ
+                    currentPitch -= PITCH_STEP;
+                    if (currentPitch < 50.0f) currentPitch = 50.0f;
+                    ttsSetPitch(currentPitch);
+                    drawParams();
+                    break;
+                }
+            }
+
+        } else if (status.del) {
             // Backspace
             converter.backspace();
             updateDisplay();
@@ -163,9 +215,22 @@ void loop() {
             speakText();
 
         } else if (status.word.size() > 0) {
+            bool paramChanged = false;
             for (size_t i = 0; i < status.word.size(); i++) {
                 char c = status.word[i];
-                if (c == ' ') {
+                if (c == '+') {
+                    // フォルマント上げ
+                    currentFormant += FORMANT_STEP;
+                    if (currentFormant > 2.0f) currentFormant = 2.0f;
+                    ttsSetFormantShift(currentFormant);
+                    paramChanged = true;
+                } else if (c == '_') {
+                    // フォルマント下げ
+                    currentFormant -= FORMANT_STEP;
+                    if (currentFormant < 0.5f) currentFormant = 0.5f;
+                    ttsSetFormantShift(currentFormant);
+                    paramChanged = true;
+                } else if (c == ' ') {
                     // Space: バッファ確定（末尾nをんに）
                     converter.flush();
                 } else if (c >= 'a' && c <= 'z') {
@@ -175,11 +240,13 @@ void loop() {
                 } else if (c == '-') {
                     // 長音符
                     converter.flush();
-                    // 「ー」はUTF-8: 0xE3 0x83 0xBC
-                    // parseHiraganaが対応しない場合もあるが表示はする
                 }
             }
-            updateDisplay();
+            if (paramChanged) {
+                drawParams();
+            } else {
+                updateDisplay();
+            }
         }
     }
 }
